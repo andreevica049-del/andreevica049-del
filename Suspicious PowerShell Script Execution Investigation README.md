@@ -89,6 +89,7 @@ Technique	Description
 T1059.001	Command and Scripting Interpreter – PowerShell
 T1105	Ingress Tool Transfer
 T1204	User Execution
+
 Containment
 
 To prevent further compromise:
@@ -98,6 +99,7 @@ The infected host Tony was isolated.
 Malicious activity was contained.
 
 Additional monitoring was recommended.
+<img width="1366" height="768" alt="image" src="https://github.com/user-attachments/assets/5af27507-7e51-4fb6-a637-bfdf741fb687" />
 
 Conclusion
 
